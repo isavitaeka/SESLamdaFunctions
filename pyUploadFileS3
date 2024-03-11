@@ -1,0 +1,103 @@
+import json
+import boto3
+import base64
+import string
+import random
+
+s3_client = boto3.client("s3")
+ses_client = boto3.client('ses', region_name='us-east-1')
+sns_client = boto3.client('sns')
+    
+def lambda_handler (event, context):
+    print ("Start processing...")
+    print (json.dumps(event))
+    
+
+    
+    dynamo_client = boto3.resource('dynamodb')
+    print ("Got DynamoDB Client" , dynamo_client)
+    
+    table = dynamo_client.Table('files')
+    print ("Connected to table" , table)
+    
+    s3_bucket = "file-storage-cloud"
+    
+    print (json.dumps(event))
+
+    file_content = event["body-json"]
+    print ("Content of file", file_content)
+
+
+    filenameN = event["params"]["header"]["filename"]
+    user = event["params"]["header"]["user"]
+    print ("File to upload" + filenameN)
+
+    content_decoded = base64.b64decode(file_content)
+    print ("Decoded content of file", content_decoded)
+    
+    
+    #Upload file to S3    
+    s3_upload = s3_client.put_object(Bucket=s3_bucket, Key=filenameN, Body=content_decoded)
+    print (s3_upload);
+    print ("File updaloaded to S3")
+
+
+    
+    response = table.put_item(
+	       Item={
+	        'user': user,
+            'filename': filenameN
+       }
+   )
+    print (response);
+    print ("Updated record in Dynamo DB", filenameN, user);
+    
+    
+    # Send Email to the User
+    sourceAddress = 'savita@savitasingh18.shop'
+    message = "Dear User,\n\n" + filenameN + " is uploaded by you. \n\nIf you do not want this file to be stored, reply to this email with DELETE in the Subject\n\nThank you\nSysadminTeam"
+    subject = "File Uploaded: " + filenameN + " : Action Needed"
+    
+        
+    
+    print ("Sending email");    
+    response = ses_client.send_email(
+    Destination={
+        'ToAddresses': [user]
+    },
+    Message={
+        'Body': {
+            'Text': {
+                'Charset': 'UTF-8',
+                'Data': message,
+            }
+        },
+        'Subject': {
+            'Charset': 'UTF-8',
+            'Data': subject,
+        },
+    },
+    Source=sourceAddress
+    )
+    
+    print (response);
+    print ("Email sent to ", user)
+    
+    
+    
+    # Send Notification to the System Admins
+    message = "CreateFileEvent: " + filenameN + "\nUploaded by " + user + ".\nSystem Admin"
+    response = sns_client.publish(TopicArn='arn:aws:sns:us-east-1:706824313294:SES-EmailReceived-Topic',Message=message)
+    print (response);
+    print("Message published")
+    
+    
+    
+    print ("Sending Reponse");
+    return {
+        'statusCode': 200,
+        'statusRea': json.dumps('file uploaded'),
+        'fromEmail': user,
+        'fileName' : filenameN
+    }
+    
