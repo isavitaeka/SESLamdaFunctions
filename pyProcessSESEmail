@@ -1,0 +1,127 @@
+import json
+import boto3
+import base64
+import string
+import random
+from boto3.dynamodb.conditions import Key
+
+sns_client = boto3.client('sns')
+
+
+
+def lambda_handler(event, context):
+
+    # Log the received event for debugging purposes
+    print("Received event: " + json.dumps(event))    
+
+    dynamo_client = boto3.resource('dynamodb')
+    print ("Got DynamoDB Client" , dynamo_client)
+    table = dynamo_client.Table('files')
+    print ("Connected to table" , table)
+    
+
+    # Iterate over records in the event
+    for record in event['Records']:
+        # Check if the record contains an SES message
+
+        if record['eventSource'] == 'aws:ses':
+            print("Event: ", record['ses'] )
+
+            # Extract SES message
+            #ses_message = json.loads(record['ses'])
+            ses_message = record['ses']['mail']
+            print("Mail: ", ses_message['destination'] )
+            
+            
+            #mail = ses_message['mail']
+            common_headers = ses_message['commonHeaders']
+            subject = common_headers['subject']
+            sender = common_headers['from'][0]
+            recipients = common_headers['to']
+            
+            # Print email details for debugging
+            print("Email Subject:", subject)
+            print("Email Sender:", sender)
+            print("Email Recipients:", recipients)
+            
+            file = process_email(table, sender)
+            print ("File to be Delete", delete_file)
+            
+            # Check if the SES message type is 'Notification'
+            if subject.find("DELETE") == -1:
+                print("DELETE Not requested by", sender)
+            else:
+                print("DELETE requested by", sender)
+                delete_file (file)
+                print ("Deleted file ", file)
+
+
+            # Send Notification to the System Admins
+            message = "DeleteFileEvent: " + file + "\n Deleted on " + sender + " Request.\n\nSystem Admin"
+            response = sns_client.publish(TopicArn='arn:aws:sns:us-east-1:706824313294:SES-EmailReceived-Topic',Message=message)
+            print (response);
+            print("Message published")
+    
+                
+    return {
+        'statusCode': 200,
+        'subject': subject,
+        'sender' : sender,
+        'receiver' : recipients,
+        'action' : subject,
+        'body': json.dumps('Email event processed successfully')
+    }
+
+
+
+def process_email(table, sender):
+    # Implement your email processing logic here
+    # You can extract further details from the email object if needed
+    print("File the file for ..." + sender)
+    sender = "savitasingh18@gmail.com"
+    try:
+        
+        #response = table.query(
+        #KeyConditionExpression=Key('id').eq(sender)
+        #) 
+        reponse = table.get_item (
+            Key={
+                'user' : sender
+            }
+        )
+        print ("File Identified ", reponse['Item']['filename'])
+        filename = reponse['Item']['filename']
+        
+        print ("Filename ", filename)
+   
+    except Exception as e: 
+        print(e)
+        
+    return filename
+
+def delete_file (filename):
+    print("Deleting file Name..." + filename)
+    src_bucket = "cpe-user-input"
+    
+    s3 = boto3.resource('s3')
+    s3_client = boto3.client("s3")
+
+
+    
+    try:
+        #Check file
+        #Upload file to S3    
+        s3_upload = s3_client.put_object
+        s3.Object(src_bucket, filename).load()
+        print ("loading", filename , "from bucket ", src_bucket )
+        
+        # Delete the file from the source bucket
+        s3.Object(src_bucket, filename).delete()
+        print ("Deleting", filename , "from bucket ", src_bucket )
+
+    except Exception as e:
+        return {"error":str(e)}
+    
+    return {'status': 'ok'}
+
+
